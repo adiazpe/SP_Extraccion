@@ -3,6 +3,18 @@ const { getAccessToken, getEmailsFromAPI, getTotalEmails } = require('./connecti
 const { pool } = require('./connections/database');
 const DatabaseService = require('./services/queries');
 
+
+const optimizeDatabase = async () => {
+    console.log('🔧 Optimizando base de datos...');
+    try {
+        await pool.query('OPTIMIZE TABLE SP_envios');
+        console.log('✅ Base de datos optimizada');
+    } catch (error) {
+        console.error('❌ Error optimizando base de datos:', error);
+    }
+};
+
+
 const testfinal = async () => {
     const startTime = performance.now();
     let extractionId;
