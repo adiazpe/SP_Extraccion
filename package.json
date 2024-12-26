@@ -5,7 +5,8 @@
     "main": "src/index.js",
     "scripts": {
         "start": "node src/index.js",
-        "test": "echo \"Error: no test specified\" && exit 1"
+        "test": "echo \"Error: no test specified\" && exit 1",
+        "setup-git": "node scripts/git-auth.js"
     },
     "author": "Nucleo SP Mexico SA de CV - Super Partner Agency",
     "license": "Proprietary",
@@ -17,14 +18,4 @@
     "devDependencies": {
         "nodemon": "^3.1.7"
     }
-
-    {
-        "scripts": {
-            "start": "node src/index.js",
-            "test": "echo \"Error: no test specified\" && exit 1",
-            "setup-git": "node scripts/git-auth.js"
-        }
-    }
-
-    
 }
