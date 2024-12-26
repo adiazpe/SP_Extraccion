@@ -1,0 +1,225 @@
+require('dotenv').config();
+const { getAccessToken, getEmailsFromAPI } = require('./connections/sendpulse');
+const { pool } = require('./connections/database');
+
+const updateControlOffset = async (offset, totalProcessed) => {
+    await pool.query(`
+        UPDATE SP_control_offset 
+        SET offset_value = ?,
+            total_processed = ?,
+            last_date_processed = NOW()
+        WHERE id = 1
+    `, [offset, totalProcessed]);
+};
+
+const createExtractionRecord = async (startDate, endDate) => {
+    const [result] = await pool.query(`
+        INSERT INTO SP_extraction_history (
+            start_date, date_range_from, date_range_to, status
+        ) VALUES (NOW(), ?, ?, 'running')
+    `, [startDate, endDate]);
+    return result.insertId;
+};
+
+const updateExtractionHistory = async (id, stats) => {
+    await pool.query(`
+        UPDATE SP_extraction_history SET
+            end_date = NOW(),
+            total_records = ?,
+            successful_inserts = ?,
+            total_batches = ?,
+            last_offset = ?,
+            execution_time = ?,
+            status = 'completed',
+            execution_details = ?
+        WHERE id = ?
+    `, [
+        stats.totalRegistros,
+        stats.insertadosExitosos,
+        stats.totalBatches,
+        stats.lastOffset,
+        stats.executionTime,
+        JSON.stringify({
+            nuevos: stats.insertadosExitosos,
+            actualizados: stats.actualizadosExitosos,
+            sinCambios: stats.sinCambios
+        }),
+        id
+    ]);
+};
+
+const testfinal = async () => {
+    const startTime = performance.now();
+    let extractionId;
+    let batchCount = 0;
+    let insertadosExitosos = 0;
+    let actualizadosExitosos = 0;
+    let sinCambios = 0;
+    const TOKEN_REFRESH_INTERVAL = 50 * 60 * 1000;
+    let lastTokenTime = Date.now();
+    
+    try {
+        let tokenData = await getAccessToken();
+        const batchSize = 100;
+        let currentOffset = 0;
+        let totalRegistros = 0;
+        let continuar = true;
+
+        const startDate = '2024-09-23 07:14:00';
+        const endDate = '2024-09-23 23:59:59';
+
+        // Crear registro de extracción
+        extractionId = await createExtractionRecord(startDate, endDate);
+
+        while (continuar) {
+            if (Date.now() - lastTokenTime > TOKEN_REFRESH_INTERVAL) {
+                tokenData = await getAccessToken();
+                lastTokenTime = Date.now();
+            }
+
+            batchCount++;
+            
+            const params = {
+                limit: batchSize,
+                offset: currentOffset,
+                from: startDate,
+                to: endDate
+            };
+            
+            const response = await getEmailsFromAPI(tokenData, params);
+            const emails = response.data;
+            
+            if (!emails || emails.length < batchSize) {
+                continuar = false;
+            }
+
+            if (emails && emails.length > 0) {
+                await pool.query('START TRANSACTION');
+
+                try {
+                    for (const email of emails) {
+                        const trackingData = email.tracking || {};
+                        const trackingJson = JSON.stringify(trackingData);
+                        const clicks = trackingData.click || 0;
+                        const opens = trackingData.open || 0;
+                        const clientInfo = JSON.stringify(trackingData.client_info || []);
+
+                        const [result] = await pool.query(`
+                            INSERT INTO SP_envios (
+                                id, send_date, sender, recipient, subject, 
+                                smtp_answer_code, smtp_answer_code_explain,
+                                smtp_answer_data, tracking, clicks, opens, 
+                                client_info, created_at, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+                            ON DUPLICATE KEY UPDATE
+                                sender = VALUES(sender),
+                                recipient = VALUES(recipient),
+                                subject = VALUES(subject),
+                                smtp_answer_code = VALUES(smtp_answer_code),
+                                smtp_answer_code_explain = VALUES(smtp_answer_code_explain),
+                                smtp_answer_data = VALUES(smtp_answer_data),
+                                tracking = VALUES(tracking),
+                                clicks = VALUES(clicks),
+                                opens = VALUES(opens),
+                                client_info = VALUES(client_info),
+                                updated_at = CASE
+                                    WHEN send_date BETWEEN ? AND ?
+                                    THEN NOW()
+                                    ELSE updated_at
+                                END
+                        `, [
+                            email.id,
+                            email.send_date,
+                            email.sender,
+                            email.recipient,
+                            email.subject,
+                            email.smtp_answer_code || null,
+                            email.smtp_answer_code_explain || null,
+                            email.smtp_answer_data || null,
+                            trackingJson,
+                            clicks,
+                            opens,
+                            clientInfo,
+                            startDate,
+                            endDate
+                        ]);
+
+                        if (result?.affectedRows > 0) {
+                            if (result.affectedRows === 1) {
+                                insertadosExitosos++;
+                            } else if (result.affectedRows === 2) {
+                                if (result.changedRows === 1) {
+                                    actualizadosExitosos++;
+                                } else {
+                                    sinCambios++;
+                                }
+                            }
+                        }
+                    }
+
+                    await pool.query('COMMIT');
+                    
+                    // Actualizar offset después de cada batch exitoso
+                    await updateControlOffset(currentOffset, totalRegistros);
+                    
+                } catch (error) {
+                    await pool.query('ROLLBACK');
+                    throw error;
+                }
+            }
+
+            totalRegistros += emails.length;
+            currentOffset += batchSize;
+
+            if (batchCount % 50 === 0) {
+                global.gc && global.gc();
+            }
+        }
+
+        const endTime = performance.now();
+        const totalSeconds = ((endTime - startTime) / 1000).toFixed(2);
+
+        // Actualizar historial de extracción
+        await updateExtractionHistory(extractionId, {
+            totalRegistros,
+            insertadosExitosos,
+            actualizadosExitosos,
+            sinCambios,
+            totalBatches: batchCount,
+            lastOffset: currentOffset,
+            executionTime: totalSeconds
+        });
+        
+        // Resumen final
+        console.log(`\n🎉 Proceso completado:`);
+        console.log(`📊 Total registros procesados: ${totalRegistros}`);
+        console.log(`📥 Total registros nuevos: ${insertadosExitosos}`);
+        console.log(`🔄 Total registros actualizados: ${actualizadosExitosos}`);
+        console.log(`⏸️ Total registros sin cambios: ${sinCambios}`);
+        console.log(`📦 Total batches: ${batchCount}`);
+        console.log(`⏱️ Tiempo total: ${totalSeconds} segundos`);
+        console.log(`⚡ Promedio por batch: ${(totalSeconds/batchCount).toFixed(2)} segundos`);
+
+    } catch (error) {
+        // Actualizar historial con error
+        if (extractionId) {
+            await pool.query(`
+                UPDATE SP_extraction_history SET
+                    end_date = NOW(),
+                    status = 'error',
+                    error_message = ?
+                WHERE id = ?
+            `, [error.message, extractionId]);
+        }
+        console.error('❌ Error:', error);
+    } finally {
+        await pool.end();
+    }
+};
+
+// Para ejecutar en segundo plano
+if (require.main === module) {
+    testfinal().catch(console.error);
+}
+
+module.exports = testfinal;
