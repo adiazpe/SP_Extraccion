@@ -4,16 +4,6 @@ const { pool } = require('./connections/database');
 const DatabaseService = require('./services/queries');
 
 
-const optimizeDatabase = async () => {
-    console.log('🔧 Optimizando base de datos...');
-    try {
-        await pool.query('OPTIMIZE TABLE SP_envios');
-        console.log('✅ Base de datos optimizada');
-    } catch (error) {
-        console.error('❌ Error optimizando base de datos:', error);
-    }
-};
-
 
 const testfinal = async () => {
     const startTime = performance.now();
@@ -65,27 +55,30 @@ const testfinal = async () => {
             const emails = response.data;
 
 
-
+            //Nuevo proceso por batches usando los hashes
 
             if (emails && emails.length > 0) {
                 await pool.query('START TRANSACTION');
                 try {
-                    for (const email of emails) {
-                        const result = await DatabaseService.insertOrUpdateEmail(email, { startDate, endDate });
-                        
-                        if (result?.affectedRows > 0) {
-                            if (result.affectedRows === 1) {
-                                insertadosExitosos++;
-                            } else if (result.affectedRows === 2) {
-                                if (result.changedRows === 1) {
-                                    actualizadosExitosos++;
-                                } else {
-                                    sinCambios++;
-                                }
-                            }
-                        }
-                    }
-                    await pool.query('COMMIT');
+                    const batchResult = await DatabaseService.processEmailBatch(emails, { startDate, endDate });
+            
+                     // Actualizar contadores con los resultados de la función
+                    insertadosExitosos += batchResult.new;
+                    actualizadosExitosos += batchResult.updated;
+                    totalRegistros += batchResult.processed;
+            
+                    currentOffset += batchSize;
+             // Mostrar progreso
+                    const completionPercentage = ((totalRegistros / totalExpected) * 100).toFixed(2);
+                    console.log(`📈 Progreso: ${completionPercentage}%`);
+                } catch (error) {
+                    await pool.query('ROLLBACK');
+                    throw error;
+                }
+                await pool.query('COMMIT');
+            }
+
+
                     
                     totalRegistros += emails.length;
                     currentOffset += batchSize;
