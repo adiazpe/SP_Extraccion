@@ -20,7 +20,7 @@ const testfinal = async () => {
         const batchSize = 100;
         let currentOffset = 0;
         let totalRegistros = 0;
-        const startDate = '2024-10-01 00:00:00';
+        const startDate = '2024-11-14 00:00:00';
         const endDate = '2024-11-14 23:59:59';
 
         // Obtener total esperado
