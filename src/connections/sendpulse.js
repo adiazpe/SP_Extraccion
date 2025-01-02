@@ -24,7 +24,7 @@ const getAccessToken = async () => {
     }
 };
 
-const getEmailsFromAPI = async (tokenData, params) => {
+const getEmailsFromAPIOld = async (tokenData, params) => {
     try {
         const response = await axios.get(
             `${apiSPConfig.BASE_URL}/smtp/emails`,
@@ -40,6 +40,28 @@ const getEmailsFromAPI = async (tokenData, params) => {
     } catch (error) {
         console.error('❌ Error en petición a API:', error);
         throw error;
+    }
+};
+
+async function getEmailsFromAPI(tokenData, params, maxRetries = 5, retryDelay = 10000) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            return await axios.get(
+                `${apiSPConfig.BASE_URL}/smtp/emails`,
+                {
+                    headers: { 
+                        'Authorization': `Bearer ${tokenData.token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    params: params
+                }
+            );
+        } catch (error) {
+            if (attempt === maxRetries) throw error;
+            
+            console.log(`Intento ${attempt} falló, reintentando en ${retryDelay/1000}s...`);
+            await new Promise(resolve => setTimeout(resolve, retryDelay));
+        }
     }
 };
 
@@ -65,5 +87,6 @@ const getTotalEmails = async (tokenData, dateParams) => {
 module.exports = {
     getAccessToken,
     getEmailsFromAPI,
+    getEmailsFromAPIOld,
     getTotalEmails
 };

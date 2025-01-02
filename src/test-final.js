@@ -38,6 +38,11 @@ const testfinal = async () => {
         await DatabaseService.updateControlOffset(currentOffset, totalRegistros, totalExpected);
 
         while (totalRegistros < totalExpected) {
+
+             // Inicio de medición del batch
+            const batchStartTime = performance.now();
+
+
             if (Date.now() - lastTokenTime > TOKEN_REFRESH_INTERVAL) {
                 tokenData = await getAccessToken();
                 lastTokenTime = Date.now();
@@ -62,48 +67,44 @@ const testfinal = async () => {
                 try {
                     const batchResult = await DatabaseService.processEmailBatch(emails, { startDate, endDate });
             
-                     // Actualizar contadores con los resultados de la función
+                    // Actualizar contadores con los resultados de la función
                     insertadosExitosos += batchResult.new;
                     actualizadosExitosos += batchResult.updated;
-                    totalRegistros += batchResult.processed;
+                    sinCambios += batchResult.sinCambios;
             
-                    currentOffset += batchSize;
-             // Mostrar progreso
-                    const completionPercentage = ((totalRegistros / totalExpected) * 100).toFixed(2);
-                    console.log(`📈 Progreso: ${completionPercentage}%`);
-                } catch (error) {
-                    await pool.query('ROLLBACK');
-                    throw error;
-                }
-                await pool.query('COMMIT');
-            }
-
-
-                    
                     totalRegistros += emails.length;
                     currentOffset += batchSize;
+            
+                     // Actualizar offset y progreso
+                        await DatabaseService.updateControlOffset(currentOffset, totalRegistros, totalExpected);
+                        
+                        const completionPercentage = ((totalRegistros / totalExpected) * 100).toFixed(2);
+                        
+                        await pool.query('COMMIT');
 
-                    // Actualizar offset y progreso
-                    await DatabaseService.updateControlOffset(currentOffset, totalRegistros, totalExpected);
-                    
-                    const completionPercentage = ((totalRegistros / totalExpected) * 100).toFixed(2);
-                    console.log(`📈 Progreso: ${completionPercentage}%`);
+                        // Final de medición del batch
+                        const batchEndTime = performance.now();
+                        const batchSeconds = ((batchEndTime - batchStartTime) / 1000).toFixed(2);
+                        
+                        // Mostrar métricas del batch
+                        console.log(`📈 Progreso: ${completionPercentage}%`);
+                        console.log(`⏱️ Tiempo del batch ${batchCount}: ${batchSeconds} segundos`);
+                        console.log(`📊 Resultados batch ${batchCount}: ${batchResult.new} nuevos, ${batchResult.updated} actualizados, ${batchResult.sinCambios} sin cambios\n`);
 
-                   // Validación de batch incompleto
-                    if (emails.length < batchSize) {
-                     console.log('📦 Batch incompleto detectado, finalizando proceso');
-                     break;
-                    } 
-
-
-                } catch (error) {
-                    await pool.query('ROLLBACK');
-                    throw error;
+                        if (emails.length < batchSize) {
+                            console.log('📦 Batch incompleto detectado, finalizando proceso');
+                            break;
+                        }
+                    } catch (error) {
+                        await pool.query('ROLLBACK');
+                        throw error;
+                    }
+                } else {
+                    console.log('❌ No hay más registros para procesar');
+                    break;
                 }
-            }   else {
-                console.log('❌ No hay más registros para procesar');
-                break;
-            }
+     
+
 
             if (batchCount % 50 === 0) {
                 global.gc && global.gc();
