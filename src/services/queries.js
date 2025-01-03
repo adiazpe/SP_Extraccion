@@ -69,7 +69,7 @@ class DatabaseService {
     async getExistingEmailHashes(emailIds) {
         const [records] = await pool.query(`
             SELECT id, content_hash 
-            FROM SP_envios 
+            FROM temp_day_hashes 
             WHERE id IN (?)
         `, [emailIds]);
         
@@ -168,6 +168,31 @@ class DatabaseService {
             // Y este return también debe incluir sinCambios
             return { processed: 0, new: 0, updated: 0, sinCambios: 0 };
     }
+
+    // En DatabaseService
+    async createDayHashesTable(date) {
+        const dayStart = `${date} 00:00:00`;
+        const dayEnd = `${date} 23:59:59`;
+        
+        await pool.query(`
+            CREATE TEMPORARY TABLE IF NOT EXISTS temp_day_hashes (
+                id varchar(50) PRIMARY KEY,
+                content_hash varchar(32)
+            ) ENGINE=MEMORY;
+        `);
+
+        await pool.query(`
+            INSERT INTO temp_day_hashes
+            SELECT id, content_hash 
+            FROM SP_envios 
+            WHERE send_date BETWEEN ? AND ?
+        `, [dayStart, dayEnd]);
+    }
+
+    async dropDayHashesTable() {
+        await pool.query('DROP TEMPORARY TABLE IF EXISTS temp_day_hashes');
+    }
+
 
     // Función de optimización de la base de datos
     async optimizeDatabase() {

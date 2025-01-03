@@ -3,6 +3,18 @@ const { getAccessToken, getEmailsFromAPI, getTotalEmails } = require('./connecti
 const { pool } = require('./connections/database');
 const DatabaseService = require('./services/queries');
 
+async function getDaysInRange(startDate, endDate) {
+    const days = [];
+    const current = new Date(startDate);
+    const end = new Date(endDate);
+    
+    while (current <= end) {
+        days.push(current.toISOString().split('T')[0]);
+        current.setDate(current.getDate() + 1);
+    }
+    return days;
+}
+
 
 
 const testfinal = async () => {
